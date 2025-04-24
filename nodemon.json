@@ -1,0 +1,7 @@
+{
+    "watch": ["server.js", "scrapers"], 
+    "ignore": [
+      "datas/*",
+      "logs/*"
+    ]
+}
