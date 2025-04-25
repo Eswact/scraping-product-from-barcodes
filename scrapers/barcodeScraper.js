@@ -21,6 +21,10 @@ const apiList = {
   showSanal: "https://api.showsanal.com/api/home/slug/search?q=",
 }
 
+const htmlList = {
+  sarperMarket: "https://www.sarpermarket.com",
+}
+
 const parsers = {
   mopas: ($) => {
     return $(".product-list-grid .card").get().map((el) => {
@@ -89,6 +93,22 @@ const parsers = {
     }
     return [];
   },
+
+  sarperMarket: ($) => {
+    return $("li.product").get().map((el) => {
+      const barcode = $(el).find(".skucuk").text().trim();
+      const productImgSrc = $(el).find(".product-thumbnail img").attr("src")?.trim();
+      const productTitle = $(el).find("h2.woocommerce-loop-product__title").text().trim();
+      const productPrice = $(el).find(".woocommerce-Price-amount.amount").first().text().replace("₺", "").trim();
+  
+      return {
+        barcode,
+        productImgSrc: productImgSrc?.startsWith("http") ? productImgSrc : `https:${productImgSrc}`,
+        productTitle,
+        productPrice,
+      };
+    }).filter(p => p.barcode);
+  }
 };
 
 function normalizePrice(price) {
@@ -242,4 +262,45 @@ async function fetchBarcode(barcode, lastMarket = null) {
   return { success: false, message: "❌ Hiçbir sitede ürün bulunamadı." };
 }
 
-module.exports = { fetchBarcode };
+function fetchBarcodeFromHtml(market, path, category) {
+  if (!parsers[market]) {
+    console.warn(`❗ Bilinmeyen market: ${market}`);
+    return { success: false, message: `Bilinmeyen market: ${market}` };
+  }
+
+  try {
+    const htmlContent = fs.readFileSync(path, "utf-8");
+    const $ = cheerio.load(htmlContent);
+    const productListArray = parsers[market]($).filter(p => p.barcode);
+
+    if (productListArray.length > 0) {
+      const resultList = productListArray.map((product) => {
+        if (product.productPrice) {
+          product.productPrice = normalizePrice(product.productPrice);
+        }
+        product.category = category || "unknown-category";
+
+        return {
+          site: market,
+          barcode: product.barcode || "manual-barcode",
+          productList: [product],
+        };
+      });
+
+      resultList.forEach((result, i) => {
+        addProductList(result);
+      });
+
+      console.log(`✅ ${market} üzerinden ${resultList.length} ürün bulundu ve kaydedildi (HTML'den).`);
+      return { success: true, count: resultList.length };
+    } else {
+      console.warn(`❌ ${market} -> HTML'den ürün bulunamadı.`);
+      return { success: false, message: "Ürün bulunamadı." };
+    }
+  } catch (err) {
+    console.error(`❗ HTML dosyası okunamadı veya işlenemedi: ${err.message}`);
+    return { success: false, message: err.message };
+  }
+}
+
+module.exports = { fetchBarcode, fetchBarcodeFromHtml };

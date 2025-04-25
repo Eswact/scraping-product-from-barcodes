@@ -6,7 +6,9 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon server.js",
     "extract-barcode": "node utils/csv2BarcodeList.js",
-    "get-info": "node utils/getInfo.js"
+    "add-barcodes2list": "node utils/addCsvBarcodes2ProductList.js",
+    "get-info": "node utils/getInfo.js",
+    "html-scraper": "node utils/htmlScraper.js"
   },
   "keywords": [],
   "author": "",
@@ -16,6 +18,7 @@
     "axios": "^1.8.4",
     "cheerio": "^1.0.0",
     "express": "^5.1.0",
-    "nodemon": "^3.1.9"
+    "nodemon": "^3.1.9",
+    "puppeteer": "^24.7.2"
   }
 }
