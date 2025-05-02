@@ -1,14 +1,27 @@
-const foundedOld = require('../datas/json/product-list.json');
-const foundedNew = require('../datas/json/product-list-new.json');
+const fs = require('fs');
+const path = require('path');
+
+const founded = require('../datas/json/product-list.json');
 const updatedFounded = require('../datas/json/updated-product-list.json');
 const notFounded = require('../datas/json/notfound-barcodes.json');
-const willBeSearch = require('../datas/json/will-be-search.json');
+const imagesDir = "./datas/images";
 
+console.log("FROM TAMSOFT", founded.filter(x => x.site == "tamsoft").length);
+console.log("FROM SCRAPİNG", (founded.length - (founded.filter(x => x.site == "tamsoft").length)));
 
-console.log("founded old", foundedOld.length);
-console.log("from tamsoft", foundedOld.filter(x => x.site == "tamsoft").length);
-console.log("updatedFounded", updatedFounded.length);
-console.log("founded new", foundedNew.length);
-// console.log("founded new new", foundedNew.filter(x => x.site == "trendyol" || x.site == "hepsiburada" || x.site == "onurMarket" || x.site == "pazarama").length);
-console.log("notFounded", notFounded.length);
-console.log("willBeSearch", willBeSearch.length);
+console.log("HAVE IMAGE LINK", updatedFounded.filter(x => x.productList?.length > 0).length);
+console.log("TOTAL FOUND", founded.length);
+console.log("TOTAL NOT FOUND", notFounded.length);
+
+fs.readdir(imagesDir, (err, files) => {
+    if (err) {
+        console.error(`❌ Klasör okunamadı: ${err}`);
+        return;
+    }
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+    const imageFiles = files.filter(file => 
+        imageExtensions.includes(path.extname(file).toLowerCase())
+    );
+
+    console.log(`📸 DOWNLOADED IMAGES:`, imageFiles.length);
+});

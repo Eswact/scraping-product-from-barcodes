@@ -1,8 +1,8 @@
 const fs = require("fs");
 const path = require("path");
 
-const CSV_PATH = "./datas/csv/bufiyat_stoklar.csv";
-const JSON_PATH = "./datas/json/product-list.json";
+const CSV_PATH = "./datas/csv/new/868_list.csv";
+const JSON_PATH = "./datas/json/product-list-new.json";
 
 function parseCSVBarcodes(csvText) {
   const lines = csvText.trim().split("\n");

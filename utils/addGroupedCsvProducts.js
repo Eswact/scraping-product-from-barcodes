@@ -1,78 +1,64 @@
 const fs = require("fs");
-const path = require("path");
-const readline = require("readline");
+const csv = require("csv-parser");
 
-const csvPath = path.join(__dirname, "../datas/csv/trendyol.csv");
-const productListPath = path.join(__dirname, "../datas/json/product-list.json");
-const skippedBarcodesPath = path.join(__dirname, "../datas/json/skipped-barcodes.json");
+const csvPath = "./datas/csv/new/869_list.csv";
+const outputPath = "./datas/json/product-list-new.json";
+const existingBarcodesPath = "./datas/json/product-list.json";
+const skippedBarcodesPath = "./datas/json/skipped-barcodes.json";
 
-const groupedProducts = new Map();
-
-// Mevcut product-list.json'dan barkodları topla
-const existingProductList = JSON.parse(fs.readFileSync(productListPath, "utf-8"));
-const existingBarcodes = new Set();
-
-existingProductList.forEach((item) => {
+const rawBarcodes = JSON.parse(fs.readFileSync(existingBarcodesPath, "utf-8"));
+const existingBarcodes = [];
+rawBarcodes.forEach((item) => {
   if (Array.isArray(item.barcode)) {
-    item.barcode.forEach((b) => existingBarcodes.add(b));
+    existingBarcodes.push(...item.barcode);
   } else {
-    existingBarcodes.add(item.barcode);
+    existingBarcodes.push(item.barcode);
   }
 });
 
+
+const groupedProducts = {};
 const skippedBarcodes = [];
 
-const rl = readline.createInterface({
-  input: fs.createReadStream(csvPath),
-  crlfDelay: Infinity,
-});
+fs.createReadStream(csvPath)
+  .pipe(csv({ separator: ";" }))
+  .on("data", (row) => {
+    const barcode = row[Object.keys(row)[0]];
+    const productTitle = row[Object.keys(row)[1]];
+    const productImgSrc = row[Object.keys(row)[2]];
 
-rl.on("line", (line) => {
-  const [id, barcode, title, imageUrl] = line.split(";").map((s) => s.trim());
-  if (!barcode || !imageUrl || !title) return;
-
-  if (groupedProducts.has(imageUrl)) {
-    groupedProducts.get(imageUrl).barcodes.push(barcode);
-  } else {
-    groupedProducts.set(imageUrl, {
-      barcodes: [barcode],
-      productTitle: title,
-      productImgSrc: imageUrl,
-    });
-  }
-});
-
-rl.on("close", () => {
-  let addedCount = 0;
-
-  for (const [imageUrl, product] of groupedProducts.entries()) {
-    const filteredBarcodes = product.barcodes.filter((b) => !existingBarcodes.has(b));
-
-    if (filteredBarcodes.length === 0) {
-      skippedBarcodes.push(...product.barcodes);
-      continue;
+    if (existingBarcodes.includes(barcode)) {
+      console.log(`🔁 Barkod atlandı (zaten var): ${barcode}`);
+      skippedBarcodes.push(barcode);
+      return;
     }
 
-    const entry = {
-      site: "tamsoft",
-      barcode: filteredBarcodes.length === 1 ? filteredBarcodes[0] : filteredBarcodes,
-      productList: [
-        {
-          productImgSrc: product.productImgSrc,
-          productTitle: product.productTitle,
-        },
-      ],
-    };
+    const key = `${productTitle}||${productImgSrc}`;
 
-    existingProductList.push(entry);
-    addedCount++;
+    if (!groupedProducts[key]) {
+      groupedProducts[key] = {
+        site: "tamsoft",
+        barcode: [barcode],
+        productList: [
+          {
+            productImgSrc,
+            productTitle,
+          },
+        ],
+      };
+    } else {
+      groupedProducts[key].barcode.push(barcode);
+    }
+  })
+  .on("end", () => {
+    const outputArray = Object.values(groupedProducts).map((item) => {
+      if (item.barcode.length === 1) {
+        item.barcode = item.barcode[0]; // tek barkodsa string'e çevir
+      }
+      return item;
+    });
 
-    filteredBarcodes.forEach((b) => existingBarcodes.add(b));
-  }
-
-  fs.writeFileSync(productListPath, JSON.stringify(existingProductList, null, 2), "utf-8");
-  fs.writeFileSync(skippedBarcodesPath, JSON.stringify(skippedBarcodes, null, 2), "utf-8");
-
-  console.log(`✅ Toplam ${addedCount} yeni grup eklendi.`);
-  console.log(`⚠️ ${skippedBarcodes.length} barkod zaten vardı, skipped-barcodes.json'a yazıldı.`);
-});
+    fs.writeFileSync(outputPath, JSON.stringify(outputArray, null, 2), "utf-8");
+    fs.writeFileSync(skippedBarcodesPath, JSON.stringify(skippedBarcodes, null, 2), "utf-8");
+    console.log(`✅ JSON dosyası oluşturuldu: ${outputPath}`);
+  });

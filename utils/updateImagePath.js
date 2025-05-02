@@ -1,8 +1,8 @@
 const fs = require("fs");
 const path = require("path");
-const productList = require('../datas/json/product-list.json');
+const productList = require('../datas/json/product-list-new.json');
 
-const updatedProductListPath = "datas/json/updated-product-list.json";
+const updatedProductListPath = "datas/json/updated-product-list-new.json";
 const updatedProductList = []
 
 productList.forEach((product) => {

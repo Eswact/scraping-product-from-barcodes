@@ -2,8 +2,8 @@ const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 const { createWriteStream } = require("fs");
-const productListPath = path.join(__dirname, "../datas/json/product-list.json");
-const imagesFolderPath = path.join(__dirname, "../datas/images");
+const productListPath = path.join(__dirname, "../datas/json/product-list-new.json");
+const imagesFolderPath = path.join(__dirname, "../datas/new-images");
 
 var canNotDownloaded = [];
 
