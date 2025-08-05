@@ -4,6 +4,8 @@ const path = require('path');
 const founded = require('../datas/json/product-list.json');
 const updatedFounded = require('../datas/json/updated-product-list.json');
 const notFounded = require('../datas/json/notfound-barcodes.json');
+const notDownloaded = require('../datas/json/cannot-downloaded-images.json');
+
 const imagesDir = "./datas/images";
 
 console.log("FROM TAMSOFT", founded.filter(x => x.site == "tamsoft").length);
@@ -25,3 +27,5 @@ fs.readdir(imagesDir, (err, files) => {
 
     console.log(`📸 DOWNLOADED IMAGES:`, imageFiles.length);
 });
+
+console.log("CANNOT DOWNLOADED", notDownloaded.length);
