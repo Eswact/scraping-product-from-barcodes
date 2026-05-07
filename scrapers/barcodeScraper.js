@@ -1,30 +1,58 @@
-// imports
-const puppeteer = require("puppeteer");
-const cheerio = require("cheerio");
+﻿const cheerio = require("cheerio");
 const fs = require("fs");
+const { outputPath, ensureDirForFile } = require("../scripts/datasFs");
 
-// parameters
-const productListPath = "datas/json/product-list-new.json";
-const notFoundPath = "datas/json/notfound-barcodes.json";
+const productListPath = outputPath("product-list.json");
+const notFoundPath = outputPath("not-found-barcodes.json");
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
-const BATCH_SIZE = 8; // number of barcodes to fetch at once
-const MAX_TABS = 4; // webList.object.keys().length
-const WAIT_BETWEEN_REQUESTS_MS = 500;
 
 const webList = {
     trendyol: "https://www.trendyol.com/sr?q=",
     hepsiburada: "https://www.hepsiburada.com/ara?q=",
     pazarama: "https://www.pazarama.com/arama?q=",
-    onurMarket: "https://www.onurmarket.com/Arama?1&kelime=",
-
-    // showSanal: "https://api.showsanal.com/api/home/slug/search?q=",
-    // mopas: "https://www.mopas.com.tr/search/?text=",
-    // aftaMarket: "https://www.aftamarket.com.tr/arama?q=",
-    // carrefour: "https://www.carrefoursa.com/search/?text=",
-    // marketKarsilastir: "https://marketkarsilastir.com/ara/",
-}
+    mopas: "https://www.mopas.com.tr/search/?text=",
+    aftaMarket: "https://www.aftamarket.com.tr/arama?q=",
+    carrefour: "https://www.carrefoursa.com/search/?text=",
+    marketKarsilastir: "https://marketkarsilastir.com/ara/",
+};
 
 const parsers = {
+    trendyol: ($) => {
+        if ($(".srch-rslt-title .srch-ttl-cntnr-wrppr h2").text().includes("bulunamadi")) {
+            return false;
+        }
+        return $(".prdct-cntnr-wrppr .p-card-wrppr").get().map((el) => {
+            const productImgSrc = $(el).find(".p-card-img-wr:first-child .p-card-img:first-child").attr("src") || "";
+            const productTitle = $(el).find(".prdct-desc-cntnr-ttl-w").text().trim() + " " + $(el).find(".prdct-desc-cntnr-name").text().trim() || "";
+            const productPrice = $(el).find(".price-information .price-item").text().trim() || "";
+            return { productImgSrc, productTitle, productPrice };
+        });
+    },
+
+    hepsiburada: ($) => {
+        if ($(".SearchResultSummary").text().includes("bulduk")) {
+            return $(".ProductList ul li").get().map((el, i) => {
+                const productImgSrc = $(el).find("picture img").attr("src") || "";
+                const productTitle = $(el).find(`h2[data-test-id="title-${i + 1}"]`).text().trim() + " " + $(el).find(".prdct-desc-cntnr-name").text().trim() || "";
+                const productPrice = $(el).find(`div[data-test-id="final-price-${i + 1}"]`).text().trim() || "";
+                return { productImgSrc, productTitle, productPrice };
+            });
+        }
+        return false;
+    },
+
+    pazarama: ($) => {
+        if ($(".product-card").get().length > 1) {
+            return false;
+        }
+        return $(".product-card").get().map((el) => {
+            const productImgSrc = $(el).find("picture img:first-child").attr("src") || "";
+            const productTitle = $(el).find("div[data-testid='product-card-title']").text().trim() || "";
+            const productPrice = $(el).find(".product-card__price .leading-tight").text().trim() || "";
+            return { productImgSrc, productTitle, productPrice };
+        });
+    },
+
     mopas: ($) => {
         if ($(".product-list-grid .card").get().length > 1) {
             return false;
@@ -37,18 +65,6 @@ const parsers = {
         });
     },
 
-    onurMarket: ($) => {
-        if ($("#ProductPageProductList .productItem").get().length > 1) {
-            return false;
-        }
-        return $("#ProductPageProductList .productItem").get().map((el) => {
-            const productImgSrc = $(el).find("img").data("original") || "";
-            const productTitle = $(el).find(".productName a").text().trim() || "";
-            const productPrice = $(el).find(".productPrice .discountPriceSpan").text().trim() || "";
-            return { productImgSrc, productTitle, productPrice };
-        });
-    },
-
     aftaMarket: ($) => {
         if ($(".catalogWrapper .productItem").get().length > 1) {
             return false;
@@ -57,18 +73,6 @@ const parsers = {
             const productImgSrc = $(el).find(".stImage").data("src") || "";
             const productTitle = $(el).find(".vitrin-urun-adi").text().trim() || "";
             const productPrice = $(el).find(".productPrice .currentPrice").text().trim() || "";
-            return { productImgSrc, productTitle, productPrice };
-        });
-    },
-
-    pazarama: ($) => {
-        if ($(".product-card").get().length > 1) {
-            return false;
-        }
-        return $(".product-card").get().map((el) => {
-            const productImgSrc = $(el).find("picture img:first-child").attr("src") || "";
-            const productTitle = $(el).find("div[data-testid='product-card-title']").text().trim() || "";
-            const productPrice = $(el).find(".product-card__price .leading-tight").text().trim() || "";
             return { productImgSrc, productTitle, productPrice };
         });
     },
@@ -95,194 +99,134 @@ const parsers = {
             return { productImgSrc, productTitle };
         });
     },
-
-    showSanal: (data) => {
-        let productList = data.page.find(x => x.$type === "row-multiple").columns[1].contents[1].columns[0].content.products;
-        if (productList && productList.length > 0) {
-            return [{
-                productImgSrc: productList[0].product.imageUrl,
-                productTitle: productList[0].product.name,
-                productPrice: productList[0].product.price,
-            }];
-        }
-        return [];
-    },
-
-    trendyol: ($) => {
-        if ($(".srch-rslt-title .srch-ttl-cntnr-wrppr h2").text().includes("bulunamadı")) {
-            return false;
-        }
-        else {
-            return $(".prdct-cntnr-wrppr .p-card-wrppr").get().map((el) => {
-                const productImgSrc = $(el).find(".p-card-img-wr:first-child .p-card-img:first-child").attr("src") || "";
-                const productTitle = $(el).find(".prdct-desc-cntnr-ttl-w").text().trim() + " " + $(el).find(".prdct-desc-cntnr-name").text().trim() || "";
-                const productPrice = $(el).find(".price-information .price-item").text().trim() || "";
-                return { productImgSrc, productTitle, productPrice };
-            });
-        }
-    },
-
-    hepsiburada: ($) => {
-        if ($(".SearchResultSummary").text().includes("bulduk")) {
-            return $(".ProductList ul li").get().map((el, i) => {
-                const productImgSrc = $(el).find("picture img").attr("src") || "";
-                const productTitle = $(el).find(`h2[data-test-id="title-${i + 1}"]`).text().trim() + " " + $(el).find(".prdct-desc-cntnr-name").text().trim() || "";
-                const productPrice = $(el).find(`div[data-test-id="final-price-${i + 1}"]`).text().trim() || "";
-                return { productImgSrc, productTitle, productPrice };
-            });
-        }
-        else {
-            return false;
-        }
-    }
 };
 
-// utils
-function randomInteger(min, max) {
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-}
 function normalizePrice(price) {
-    if (typeof price === "number") {
-        return price.toFixed(2);
-    }
-
+    if (typeof price === "number") return price.toFixed(2);
     if (typeof price === "string") {
-        const cleaned = price
-            .replace(/[^0-9.,]/g, "")
-            .replace(/\s+/g, "")
-            .replace(",", ".");
-
+        const cleaned = price.replace(/[^0-9.,]/g, "").replace(/\s+/g, "").replace(",", ".");
         const parsed = parseFloat(cleaned);
-        if (!isNaN(parsed)) {
-            return parsed.toFixed(2);
-        }
+        if (!isNaN(parsed)) return parsed.toFixed(2);
     }
-
     return "0.00";
 }
 
-// functions
-function addProductList(product) {
-    let existingList = [];
+function loadProductList() {
+    if (!fs.existsSync(productListPath)) return [];
     try {
-        if (fs.existsSync(productListPath)) {
-            const raw = fs.readFileSync(productListPath);
-            existingList = JSON.parse(raw);
-        }
-    } catch (readErr) {
-        console.warn("⚠️ product-list.json okunamadı:", readErr.message);
-    }
-
-    const alreadyExists = existingList.find(item => item.barcode === product.barcode);
-    if (!alreadyExists) {
-        existingList.push(product);
-        try {
-            fs.writeFileSync(productListPath, JSON.stringify(existingList, null, 2));
-            console.log("✅📦 product-list.json güncellendi.");
-        } catch (writeErr) {
-            console.warn("⚠️ product-list.json yazılamadı:", writeErr.message);
-        }
-    } else {
-        // console.log("🔁 Bu barkod product-list.json'da zaten var.");
+        return JSON.parse(fs.readFileSync(productListPath));
+    } catch {
+        return [];
     }
 }
+
+function addProductList(product) {
+    const existingList = loadProductList();
+    if (existingList.find(item => item.barcode === product.barcode)) return;
+    existingList.push(product);
+    try {
+        ensureDirForFile(productListPath);
+        fs.writeFileSync(productListPath, JSON.stringify(existingList, null, 2));
+    } catch (err) {
+        console.warn("product-list.json yazilamadi:", err.message);
+    }
+}
+
 function addNotFoundBarcode(barcode) {
     let notFoundList = [];
     if (fs.existsSync(notFoundPath)) {
-        const fileContent = fs.readFileSync(notFoundPath, "utf-8");
         try {
-            notFoundList = JSON.parse(fileContent);
-        } catch (e) {
-            console.warn("❗ notfound-barcodes.json geçersiz formatta, sıfırlanıyor.");
+            notFoundList = JSON.parse(fs.readFileSync(notFoundPath, "utf-8"));
+        } catch {
             notFoundList = [];
         }
     }
-
     if (!notFoundList.includes(barcode)) {
         notFoundList.push(barcode);
+        ensureDirForFile(notFoundPath);
         fs.writeFileSync(notFoundPath, JSON.stringify(notFoundList, null, 2));
-        console.log(`❌📦 ${barcode} -> notfound-barcodes.json dosyasına eklendi.`);
     }
 }
 
+async function fetchBarcode(barcode, pages) {
+    const marketEntries = Object.entries(pages);
+    let done = false;
+    let completedCount = 0;
 
-// scraper
-async function scrapeSinglePage(page, marketName, baseUrl, barcode) {
-    try {
-        const url = baseUrl + barcode;
-        await page.setUserAgent(USER_AGENT);
-        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
+    return new Promise((resolve) => {
+        const finish = (result) => {
+            if (done) return;
+            done = true;
+            resolve(result);
+        };
 
-        const content = await page.content();
-        const $ = cheerio.load(content);
+        for (const [marketName, page] of marketEntries) {
+            (async () => {
+                try {
+                    const url = webList[marketName] + barcode;
+                    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
 
-        const productListArray = parsers[marketName]($);
+                    if (done) return;
 
-        if (productListArray.length && productListArray[0].productPrice) {
-            productListArray[0].productPrice = normalizePrice(productListArray[0].productPrice);
+                    const content = await page.content();
+                    const $ = cheerio.load(content);
+                    const productListArray = parsers[marketName]($);
 
-            const result = {
-                success: true,
-                site: marketName,
-                barcode: barcode,
-                productList: [productListArray[0]],
-            };
-
-            fs.writeFileSync("datas/json/last-added-product.json", JSON.stringify(result, null, 2));
-            return result;
+                    if (productListArray && productListArray.length && productListArray[0].productPrice) {
+                        productListArray[0].productPrice = normalizePrice(productListArray[0].productPrice);
+                        const result = {
+                            success: true,
+                            site: marketName,
+                            barcode,
+                            productList: [productListArray[0]],
+                        };
+                        addProductList(result);
+                        console.log(`[OK] ${marketName} -> ${barcode}`);
+                        finish(result);
+                    }
+                } catch (err) {
+                    if (!done) console.warn(`[WARN] ${marketName} hatasi: ${err.message}`);
+                } finally {
+                    completedCount++;
+                    if (completedCount === marketEntries.length && !done) {
+                        addNotFoundBarcode(barcode);
+                        console.log(`[NOT FOUND] ${barcode}`);
+                        finish({ success: false, barcode, message: "Urun bulunamadi" });
+                    }
+                }
+            })();
         }
-
-    } catch (err) {
-        console.warn(`⚠️ ${marketName} hatası: ${err.message}`);
-    }
-
-    return null;
-}
-
-async function fetchBarcode(barcode, browser) {
-    const marketEntries = Object.entries(webList);
-
-    for (let i = 0; i < marketEntries.length; i += MAX_TABS) {
-        const batch = marketEntries.slice(i, i + MAX_TABS);
-
-        const promises = batch.map(async ([marketName, baseUrl]) => {
-            const page = await browser.newPage();
-            const result = await scrapeSinglePage(page, marketName, baseUrl, barcode);
-            await page.close();
-            return result;
-        });
-
-        const results = await Promise.allSettled(promises);
-        const success = results.find(r => r.status === "fulfilled" && r.value && r.value.success);
-
-        if (success) {
-            addProductList(success.value);
-            return success.value;
-        }
-
-        await new Promise(res => setTimeout(res, WAIT_BETWEEN_REQUESTS_MS));
-    }
-
-    addNotFoundBarcode(barcode);
-    return { success: false, message: "❌ Ürün bulunamadı: " + barcode };
+    });
 }
 
 async function fetchBarcodes(barcodes, browser) {
+    const existingBarcodes = new Set(loadProductList().map(p => String(p.barcode)));
+    const toFetch = barcodes.filter(b => !existingBarcodes.has(String(b)));
+
+    if (toFetch.length < barcodes.length) {
+        console.log(`[SKIP] ${barcodes.length - toFetch.length} barkod zaten mevcut, atlandi.`);
+    }
+    if (toFetch.length === 0) {
+        console.log("[DONE] Tum barkodlar zaten kayitli.");
+        return [];
+    }
+
+    const pages = {};
+    for (const marketName of Object.keys(webList)) {
+        const page = await browser.newPage();
+        await page.setUserAgent(USER_AGENT);
+        pages[marketName] = page;
+    }
+    console.log(`[START] ${Object.keys(pages).length} tab acildi. ${toFetch.length} barkod islenecek.`);
+
     const results = [];
+    for (let i = 0; i < toFetch.length; i++) {
+        console.log(`[${i + 1}/${toFetch.length}] -> ${toFetch[i]}`);
+        results.push(await fetchBarcode(toFetch[i], pages));
+    }
 
-    for (let i = 0; i < barcodes.length; i += BATCH_SIZE) {
-        const batch = barcodes.slice(i, i + BATCH_SIZE);
-        console.log(`[${i + BATCH_SIZE}/${barcodes.length}]`);
-
-        const promises = batch.map(async (barcode, idx) => {
-            const result = await fetchBarcode(barcode, browser);
-            return result;
-        });
-
-        const batchResults = await Promise.all(promises);
-        results.push(...batchResults);
-
-        await new Promise(res => setTimeout(res, WAIT_BETWEEN_REQUESTS_MS));
+    for (const page of Object.values(pages)) {
+        await page.close().catch(() => {});
     }
 
     return results;

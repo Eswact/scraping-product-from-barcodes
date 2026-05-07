@@ -1,7 +1,4 @@
 node_modules
 .env
-datas/csv/*
-datas/json/*
-datas/html/*
-datas/images/*
-datas/new-images/*
+/input
+/output
