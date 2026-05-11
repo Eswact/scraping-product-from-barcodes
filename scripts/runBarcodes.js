@@ -26,7 +26,7 @@ if (!Array.isArray(barcodes) || barcodes.length === 0) {
 
 console.log(`${barcodes.length} barkod gonderiliyor...`);
 
-axios.post("http://localhost:3000/get-barcodes", { barcodes }, { timeout: 0 })
+axios.post("http://localhost:3000/api/get-products", { barcodes }, { timeout: 0 })
     .then(res => {
         const results = res.data;
         const found = results.filter(r => r.success).length;

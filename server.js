@@ -15,7 +15,7 @@ app.use(bodyParser.json({ limit: "50mb" }));
 app.use(bodyParser.urlencoded({ limit: "50mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-app.post("/get-barcodes", async (req, res) => {
+app.post("/api/get-products", async (req, res) => {
     const barcodeList = req.body.barcodes;
     if (!Array.isArray(barcodeList) || barcodeList.length === 0) {
         return res.status(400).json({ error: "Barkod listesi eksik." });
