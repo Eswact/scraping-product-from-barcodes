@@ -112,7 +112,9 @@ const parsers = {
             const productImgSrc = $(el).find(".product-image").attr("src") || "";
             const productTitle = $(el).find(".product-name").text().trim() || "";
             const productPrice = $(el).find(".product-price-badge").clone().children("small").remove().end().text().trim() || "";
-            return { productImgSrc, productTitle, productPrice };
+            const _cat = $(el).find(".product-category").text().trim();
+            const categoryPath = _cat ? [_cat] : [];
+            return { productImgSrc, productTitle, productPrice, categoryPath };
         });
     },
 };
@@ -224,57 +226,50 @@ function addNotFoundBarcode(barcode) {
 
 async function fetchBarcode(barcode, pages) {
     const marketEntries = Object.entries(pages);
-    let done = false;
-    let completedCount = 0;
+    let winner = null;
 
-    return new Promise((resolve) => {
-        const finish = (result) => { if (done) return; done = true; resolve(result); };
+    await Promise.allSettled(marketEntries.map(async ([marketName, page]) => {
+        try {
+            await page.goto(webList[marketName](barcode), { waitUntil: "domcontentloaded", timeout: 15000 });
+            if (winner) return;
+            const $ = cheerio.load(await page.content());
+            const items = parsers[marketName]($);
+            if (items && items.length && items[0].productPrice) {
+                items[0].productPrice = normalizePrice(items[0].productPrice);
 
-        for (const [marketName, page] of marketEntries) {
-            (async () => {
-                try {
-                    await page.goto(webList[marketName](barcode), { waitUntil: "domcontentloaded", timeout: 15000 });
-                    if (done) return;
-                    const $ = cheerio.load(await page.content());
-                    const items = parsers[marketName]($);
-                    if (items && items.length && items[0].productPrice) {
-                        items[0].productPrice = normalizePrice(items[0].productPrice);
+                let categoryPath = items[0].categoryPath || [];
+                const rawUrl = items[0].productUrl;
+                delete items[0].productUrl;
 
-                        let categoryPath = [];
-                        const rawUrl = items[0].productUrl;
-                        delete items[0].productUrl;
-
-                        if (rawUrl && breadcrumbParsers[marketName] && !done) {
-                            const productUrl = resolveUrl(marketName, rawUrl);
-                            if (productUrl) {
-                                try {
-                                    await page.goto(productUrl, { waitUntil: "networkidle2", timeout: 20000 });
-                                    const $detail = cheerio.load(await page.content());
-                                    categoryPath = breadcrumbParsers[marketName]($detail) || [];
-                                } catch {
-                                    // breadcrumb alinamadi, bos devam et
-                                }
-                            }
-                        }
-
-                        const result = { success: true, site: marketName, barcode, product: { ...items[0], categoryPath } };
-                        addProductList(result);
-                        console.log(`[OK] ${marketName} -> ${barcode}`);
-                        finish(result);
-                    }
-                } catch (err) {
-                    if (!done) console.warn(`[WARN] ${marketName}: ${err.message}`);
-                } finally {
-                    completedCount++;
-                    if (completedCount === marketEntries.length && !done) {
-                        addNotFoundBarcode(barcode);
-                        console.log(`[NOT FOUND] ${barcode}`);
-                        finish({ success: false, barcode, message: "Urun bulunamadi" });
+                if (rawUrl && breadcrumbParsers[marketName] && !winner) {
+                    const productUrl = resolveUrl(marketName, rawUrl);
+                    if (productUrl) {
+                        try {
+                            await page.goto(productUrl, { waitUntil: "networkidle2", timeout: 20000 });
+                            const $detail = cheerio.load(await page.content());
+                            categoryPath = breadcrumbParsers[marketName]($detail) || [];
+                        } catch {}
                     }
                 }
-            })();
+
+                if (!winner) {
+                    winner = { success: true, site: marketName, barcode, product: { ...items[0], categoryPath } };
+                    addProductList(winner);
+                    console.log(`[OK] ${marketName} -> ${barcode}`);
+                }
+            }
+        } catch (err) {
+            if (!winner) console.warn(`[WARN] ${marketName}: ${err.message}`);
         }
-    });
+    }));
+
+    if (!winner) {
+        winner = { success: false, barcode, message: "Urun bulunamadi" };
+        addNotFoundBarcode(barcode);
+        console.log(`[NOT FOUND] ${barcode}`);
+    }
+
+    return winner;
 }
 
 async function fetchBarcodes(barcodes, browser, onResult = null) {
