@@ -39,7 +39,7 @@ async function run() {
 
     for (let i = 0; i < productList.length; i++) {
         const product = productList[i];
-        const imgUrl = product.productList?.[0]?.productImgSrc;
+        const imgUrl = product.product?.productImgSrc;
         if (!imgUrl) continue;
 
         const barcodes = Array.isArray(product.barcode) ? product.barcode : [product.barcode];
@@ -77,12 +77,12 @@ async function run() {
     const updatedList = productList.map((product) => {
         const p = { ...product };
         if (!Array.isArray(p.barcode)) {
-            if (p.productList?.[0]?.productImgSrc) {
-                p.productList = [{ ...p.productList[0], productImgSrc: `images/${p.barcode}.jpg` }];
+            if (p.product?.productImgSrc) {
+                p.product = { ...p.product, productImgSrc: `images/${p.barcode}.jpg` };
             }
         } else {
-            const title = p.productList?.[0]?.productTitle || "";
-            p.productList = p.barcode.map(b => ({ productTitle: title, productImgSrc: `images/${b}.jpg` }));
+            const title = p.product?.productTitle || "";
+            p.product = { productTitle: title, productImgSrc: `images/${p.barcode[0]}.jpg` };
         }
         return p;
     });

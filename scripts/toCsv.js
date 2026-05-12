@@ -25,7 +25,7 @@ const rows = [header.join(",")];
 for (const product of productList) {
     const barcode = product.barcode;
     const site = product.site || "";
-    const item = product.productList?.[0] || {};
+    const item = product.product || {};
 
     if (Array.isArray(barcode)) {
         for (const b of barcode) {

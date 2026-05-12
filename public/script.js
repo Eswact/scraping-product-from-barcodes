@@ -39,7 +39,7 @@ function resolveCard(result) {
     card.classList.remove('result-card--searching');
 
     if (result.success) {
-        const product = result.productList?.[0] || {};
+        const product = result.product || {};
         const market = marketConfig[result.site] || { name: result.site, logo: null };
 
         const imgHtml = product.productImgSrc
@@ -196,7 +196,7 @@ function displaySummary(results, container) {
 
     const rows = results.map(r => {
         if (r.success) {
-            const product = r.productList?.[0] || {};
+            const product = r.product || {};
             const market  = marketConfig[r.site] || { name: r.site, logo: null };
             const logoHtml = market.logo ? `<img src="${market.logo}" class="summary-market-logo" alt="">` : '';
             return `
@@ -257,7 +257,7 @@ function exportToExcel() {
     let csv = 'Barkod,Platform,Ürün Adı,Fiyat\n';
     data.forEach(r => {
         if (r.success) {
-            const p = r.productList?.[0] || {};
+            const p = r.product || {};
             const market = marketConfig[r.site]?.name || r.site;
             csv += [r.barcode, market, p.productTitle || '', p.productPrice || ''].map(escape).join(',') + '\n';
         } else {

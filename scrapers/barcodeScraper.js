@@ -17,6 +17,22 @@ const webList = {
     marketKarsilastir: b => `https://marketkarsilastir.com/ara?q=${b}&type=barcode`,
 };
 
+const baseUrls = {
+    trendyol:   "https://www.trendyol.com",
+    hepsiburada:"https://www.hepsiburada.com",
+    pazarama:   "https://www.pazarama.com",
+    mopas:      "https://www.mopas.com.tr",
+    aftaMarket: "https://www.aftamarket.com.tr",
+    carrefour:  "https://www.carrefoursa.com",
+    sokMarket:  "https://www.sokmarket.com.tr",
+};
+
+function resolveUrl(marketName, href) {
+    if (!href) return null;
+    if (href.startsWith("http")) return href;
+    return (baseUrls[marketName] || "") + href;
+}
+
 const parsers = {
     trendyol: ($) => {
         if ($(".did-you-mean .information-banner .information-text").text().includes("bulunamadı")) return false;
@@ -25,15 +41,17 @@ const parsers = {
             productImgSrc: $(el).find(".image-wrapper:first-child .image-slider:first-child img:first-child").attr("src") || "",
             productTitle: $(el).find(".brand-name-wrapper .product-brand").text().trim() + " " + $(el).find(".brand-name-wrapper .product-name").text().trim(),
             productPrice: $(el).find(".single-price .price-section").text().trim() || "",
+            productUrl: $(el).attr("href") || $(el).find("a").first().attr("href") || "",
         }));
     },
     hepsiburada: ($) => {
-        const firstItem = $('li#i0');
+        const firstItem = $("li#i0");
         if (firstItem.length === 0) return false;
         return [{
             productImgSrc: firstItem.find("picture img").attr("src") || "",
             productTitle: firstItem.find('[data-test-id^="title-"] a').text().trim() || "",
             productPrice: firstItem.find('[data-test-id^="final-price-"]').text().trim() || "",
+            productUrl: firstItem.find('a').attr("href") || "",
         }];
     },
     pazarama: ($) => {
@@ -42,6 +60,7 @@ const parsers = {
             productImgSrc: $(el).find("picture img:first-child").attr("src") || "",
             productTitle: $(el).find("[data-testid='product-card-title']").text().trim() || "",
             productPrice: $(el).find(".product-card__price .leading-tight").last().text().trim() || "",
+            productUrl: $(el).find("a").first().attr("href") || "",
         }));
     },
     mopas: ($) => {
@@ -50,6 +69,7 @@ const parsers = {
             productImgSrc: $(el).find("img").attr("src") || "",
             productTitle: $(el).find(".product-title").text().trim() || "",
             productPrice: $(el).find(".sale-price").text().trim() || "",
+            productUrl: $(el).find("a").first().attr("href") || "",
         }));
     },
     aftaMarket: ($) => {
@@ -58,6 +78,7 @@ const parsers = {
             productImgSrc: $(el).find(".stImage").data("src") || "",
             productTitle: $(el).find(".vitrin-urun-adi").text().trim() || "",
             productPrice: $(el).find(".productPrice .currentPrice").text().trim() || "",
+            productUrl: $(el).find("a.detailLink").first().attr("href") || "",
         }));
     },
     carrefour: ($) => {
@@ -66,16 +87,7 @@ const parsers = {
             productImgSrc: $(el).find("img").attr("src") || "",
             productTitle: $(el).find(".item-name").text().trim() || "",
             productPrice: $(el).find(".item-price").attr("content") || "",
-        }));
-    },
-    marketKarsilastir: ($) => {
-        if ($("#productsContainer .col-6.col-md-4.col-lg-3").get().length < 1) return false;
-        if ($("#productsContainer .col-6.col-md-4.col-lg-3 .product-card").get().length > 1) return false;
-        if ($(".empty-state").get().length < 1) return false;
-        return $("#productsContainer .col-6.col-md-4.col-lg-3 .product-card").get().map((el) => ({
-            productImgSrc: $(el).find(".product-image").attr("src") || "",
-            productTitle: $(el).find(".product-card-body .product-name").text().trim() || "",
-            productPrice: $(el).find(".product-card-body .product-price-badge").text().trim() || "",
+            productUrl: $(el).find("a.product-return").first().attr("href") || "",
         }));
     },
     sokMarket: ($) => {
@@ -89,8 +101,8 @@ const parsers = {
             const productPrice = $(el).find("[class*='CPriceBox-module_price'], .CPriceBox-module_price__bYk-c").first().text().trim() || "";
             const productTitle = $(el).find("[class*='CProductCard-module_title'], .CProductCard-module_title__u8bMW").first().text().trim() || "";
             const productImgSrc = $(el).find("[class*='CProductCard-module_title'] img, .CProductCard-module_imageContainer__aTMdz img").attr("src") || "";
-
-            return { productImgSrc, productTitle, productPrice };
+            const productUrl = $(el).closest("a").attr("href") || $(el).find("a").first().attr("href") || "";
+            return { productImgSrc, productTitle, productPrice, productUrl };
         });
     },
     marketKarsilastir: ($) => {
@@ -102,6 +114,72 @@ const parsers = {
             const productPrice = $(el).find(".product-price-badge").clone().children("small").remove().end().text().trim() || "";
             return { productImgSrc, productTitle, productPrice };
         });
+    },
+};
+
+const breadcrumbParsers = {
+    trendyol: ($) => {
+        const items = [];
+        $("#breadcrumb-context ul.breadcrumb li a").each((_, el) => {
+            const text = $(el).text().trim();
+            if (text && text !== "Trendyol") items.push(text);
+        });
+        return items;
+    },
+    hepsiburada: ($) => {
+        const lastItem = $('[data-test-id="breadcrumb-last-item"]');
+        if (!lastItem.length) return [];
+        const items = [];
+        lastItem.closest("ul").find("li a").each((_, el) => {
+            const text = $(el).text().trim();
+            if (text && text !== "Anasayfa") items.push(text);
+        });
+        return items;
+    },
+    pazarama: ($) => {
+        const items = [];
+        $('[data-testid="base-breadcrumb-link"]').each((_, el) => {
+            const text = $(el).text().trim();
+            if (text && text !== "Anasayfa") items.push(text);
+        });
+        return items;
+    },
+    mopas: ($) => {
+        const items = [];
+        $(".container-fluid.breadcrumb ol li a span").each((_, el) => {
+            const text = $(el).text().trim();
+            if (text && text !== "Mopaş Kategoriler") items.push(text);
+        });
+        return items;
+    },
+    aftaMarket: ($) => {
+        const items = [];
+        $("#navigasyon ul.breadcrumb li a").each((_, el) => {
+            const title = $(el).attr("title");
+            if (title && title !== "Anasayfa") items.push(title);
+        });
+        return items;
+    },
+    carrefour: ($) => {
+        try {
+            const scriptEl = $('script[type="application/ld+json"]').filter((_, el) => $(el).html().includes('"BreadcrumbList"'));
+            if (!scriptEl.length) return [];
+            const data = JSON.parse(scriptEl.first().html());
+            return (data.itemListElement || [])
+                .slice(1, -1)
+                .map(item => item.name);
+        } catch {
+            return [];
+        }
+    },
+    sokMarket: ($) => {
+        const items = [];
+        $('[class*="Breadcrumb_breadcrumbs"] a').each((_, el) => {
+            const text = $(el).text().trim();
+            // if (text) items.push(text);
+            if (text && text !== "Market") items.push(text);
+        });
+        return items;
     },
 };
 
@@ -161,7 +239,25 @@ async function fetchBarcode(barcode, pages) {
                     const items = parsers[marketName]($);
                     if (items && items.length && items[0].productPrice) {
                         items[0].productPrice = normalizePrice(items[0].productPrice);
-                        const result = { success: true, site: marketName, barcode, productList: [items[0]] };
+
+                        let categoryPath = [];
+                        const rawUrl = items[0].productUrl;
+                        delete items[0].productUrl;
+
+                        if (rawUrl && breadcrumbParsers[marketName] && !done) {
+                            const productUrl = resolveUrl(marketName, rawUrl);
+                            if (productUrl) {
+                                try {
+                                    await page.goto(productUrl, { waitUntil: "networkidle2", timeout: 20000 });
+                                    const $detail = cheerio.load(await page.content());
+                                    categoryPath = breadcrumbParsers[marketName]($detail) || [];
+                                } catch {
+                                    // breadcrumb alinamadi, bos devam et
+                                }
+                            }
+                        }
+
+                        const result = { success: true, site: marketName, barcode, product: { ...items[0], categoryPath } };
                         addProductList(result);
                         console.log(`[OK] ${marketName} -> ${barcode}`);
                         finish(result);
