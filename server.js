@@ -1,4 +1,5 @@
-﻿const express = require("express");
+﻿require("dotenv").config();
+const express = require("express");
 const path = require("path");
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");

@@ -253,16 +253,30 @@ function addNotFoundBarcode(barcode) {
 
 const PAGE_RESTART_INTERVAL = 500;
 const DETACHED_FRAME_PATTERN = /detached frame/i;
+const WORKER_COUNT = Math.max(1, parseInt(process.env.SCRAPER_WORKERS || "1", 10));
+
+const BLOCKED_RESOURCE_TYPES = new Set(["image", "media", "font", "stylesheet"]);
+const BLOCKED_URL_PATTERNS = ["google-analytics", "googletagmanager", "hotjar", "facebook", "doubleclick", "adservice", "analytics"];
+
+async function setupPage(page) {
+    await page.setUserAgent(USER_AGENT);
+    await page.setRequestInterception(true);
+    page.on("request", (req) => {
+        if (BLOCKED_RESOURCE_TYPES.has(req.resourceType())) return req.abort();
+        if (BLOCKED_URL_PATTERNS.some(p => req.url().includes(p))) return req.abort();
+        req.continue();
+    });
+}
 
 async function createPages(browser) {
     const pages = {};
     for (const marketName of Object.keys(webList)) {
         const page = await browser.newPage();
-        await page.setUserAgent(USER_AGENT);
+        await setupPage(page);
         pages[marketName] = page;
     }
     const breadcrumbPage = await browser.newPage();
-    await breadcrumbPage.setUserAgent(USER_AGENT);
+    await setupPage(breadcrumbPage);
     pages._breadcrumb = breadcrumbPage;
     return pages;
 }
@@ -270,7 +284,7 @@ async function createPages(browser) {
 async function recreatePage(browser, pages, marketName) {
     try { await pages[marketName].close(); } catch {}
     const newPage = await browser.newPage();
-    await newPage.setUserAgent(USER_AGENT);
+    await setupPage(newPage);
     pages[marketName] = newPage;
     return newPage;
 }
@@ -311,8 +325,11 @@ async function restartAllPages(browser, pages) {
     console.log("[RESTART] Tum sayfalar yeniden olusturuldu.");
 }
 
+const slowMarkets = new Set(["carrefour", "sokMarket"]);
+
 async function doFetchForMarket(page, marketName, barcode, winner, pages, browser) {
-    await page.goto(webList[marketName](barcode), { waitUntil: "domcontentloaded", timeout: 15000 });
+    const searchTimeout = slowMarkets.has(marketName) ? 20000 : 15000;
+    await page.goto(webList[marketName](barcode), { waitUntil: "domcontentloaded", timeout: searchTimeout });
     if (winner.value) return;
     const $ = cheerio.load(await page.content());
     const items = parsers[marketName]($);
@@ -341,26 +358,34 @@ async function doFetchForMarket(page, marketName, barcode, winner, pages, browse
     }
 }
 
+async function tryMarket(marketName, page, barcode, winner, pages, browser) {
+    try {
+        await doFetchForMarket(page, marketName, barcode, winner, pages, browser);
+    } catch (err) {
+        if (DETACHED_FRAME_PATTERN.test(err.message) && browser) {
+            try {
+                const newPage = await recreatePage(browser, pages, marketName);
+                await doFetchForMarket(newPage, marketName, barcode, winner, pages, browser);
+            } catch (retryErr) {
+                if (!winner.value) console.warn(`[WARN] ${marketName}: ${retryErr.message}`);
+            }
+        } else {
+            if (!winner.value) console.warn(`[WARN] ${marketName}: ${err.message}`);
+        }
+    }
+}
+
 async function fetchBarcode(barcode, pages, browser) {
-    const marketEntries = Object.entries(pages).filter(([name]) => name !== "_breadcrumb");
+    const FALLBACK_MARKET = "marketKarsilastir";
+    const mainEntries = Object.entries(pages).filter(([name]) => name !== "_breadcrumb" && name !== FALLBACK_MARKET);
     const winner = { value: null };
 
-    await Promise.allSettled(marketEntries.map(async ([marketName, page]) => {
-        try {
-            await doFetchForMarket(page, marketName, barcode, winner, pages, browser);
-        } catch (err) {
-            if (DETACHED_FRAME_PATTERN.test(err.message) && browser) {
-                try {
-                    const newPage = await recreatePage(browser, pages, marketName);
-                    await doFetchForMarket(newPage, marketName, barcode, winner, pages, browser);
-                } catch (retryErr) {
-                    if (!winner.value) console.warn(`[WARN] ${marketName}: ${retryErr.message}`);
-                }
-            } else {
-                if (!winner.value) console.warn(`[WARN] ${marketName}: ${err.message}`);
-            }
-        }
-    }));
+    await Promise.allSettled(mainEntries.map(([marketName, page]) => tryMarket(marketName, page, barcode, winner, pages, browser)));
+
+    // Fallback: only try marketKarsilastir if nothing found yet
+    if (!winner.value && pages[FALLBACK_MARKET]) {
+        await tryMarket(FALLBACK_MARKET, pages[FALLBACK_MARKET], barcode, winner, pages, browser);
+    }
 
     if (!winner.value) {
         winner.value = { success: false, barcode, message: "Urun bulunamadi" };
@@ -380,34 +405,51 @@ async function fetchBarcodes(barcodes, browser, onResult = null) {
         console.log(`[SKIP] ${barcodes.length - toFetch.length} barkod zaten mevcut.`);
     }
 
-    let pages = null;
-    if (toFetch.length > 0) {
-        pages = await createPages(browser);
-        console.log(`[START] ${Object.keys(pages).length} tab acildi. ${toFetch.length} barkod islenecek.`);
-    }
-
     const results = [];
+
+    if (toFetch.length === 0) return results;
+
+    // Create one page set per worker
+    const pageSets = await Promise.all(
+        Array.from({ length: WORKER_COUNT }, () => createPages(browser))
+    );
+    console.log(`[START] ${WORKER_COUNT} worker, ${Object.keys(pageSets[0]).length} tab/worker. ${toFetch.length} barkod islenecek.`);
+
+    const queue = [...toFetch];
     let fetchCount = 0;
 
-    for (const barcode of barcodes) {
-        let result;
-        if (existingMap.has(String(barcode))) {
-            result = { ...existingMap.get(String(barcode)), success: true };
-        } else {
+    async function worker(pages) {
+        let localCount = 0;
+        while (queue.length > 0) {
+            const barcode = queue.shift();
+            if (!barcode) break;
+
             fetchCount++;
+            localCount++;
             console.log(`[${fetchCount}/${toFetch.length}] -> ${barcode}`);
 
-            if (fetchCount % PAGE_RESTART_INTERVAL === 0) {
+            if (localCount % PAGE_RESTART_INTERVAL === 0) {
                 await restartAllPages(browser, pages);
             }
 
-            result = await fetchBarcode(barcode, pages, browser);
+            const result = await fetchBarcode(barcode, pages, browser);
+            if (onResult) onResult(result);
+            results.push(result);
         }
-        if (onResult) onResult(result);
-        results.push(result);
     }
 
-    if (pages) {
+    // Also push already-found barcodes into results
+    for (const barcode of barcodes) {
+        if (existingMap.has(String(barcode))) {
+            const result = { ...existingMap.get(String(barcode)), success: true };
+            if (onResult) onResult(result);
+            results.push(result);
+        }
+    }
+
+    await Promise.all(pageSets.map(pages => worker(pages)));
+
+    for (const pages of pageSets) {
         for (const page of Object.values(pages)) await page.close().catch(() => {});
     }
 
