@@ -1,13 +1,10 @@
 ﻿require("dotenv").config();
 const express = require("express");
 const path = require("path");
-const puppeteer = require("puppeteer-extra");
-const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const bodyParser = require("body-parser");
 const barcodeScraper = require("./scrapers/barcodeScraper");
 const { ensureOutputDir } = require("./scripts/datasFs");
 
-puppeteer.use(StealthPlugin());
 ensureOutputDir();
 
 const PORT = 3000;
@@ -22,27 +19,7 @@ app.post("/api/get-products", async (req, res) => {
         return res.status(400).json({ error: "Barkod listesi eksik." });
     }
     try {
-        const browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-extensions",
-                "--disable-background-networking",
-                "--disable-sync",
-                "--disable-translate",
-                "--mute-audio",
-                "--no-first-run",
-                "--hide-scrollbars",
-                "--disable-background-timer-throttling",
-                "--disable-backgrounding-occluded-windows",
-                "--disable-renderer-backgrounding",
-            ],
-        });
-        const results = await barcodeScraper.fetchBarcodes(barcodeList, browser);
-        await browser.close();
+        const results = await barcodeScraper.fetchBarcodes(barcodeList);
         res.json(results);
     } catch (err) {
         console.error("Hata:", err.message);
@@ -63,37 +40,14 @@ app.post("/api/search", async (req, res) => {
 
     const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 
-    let browser;
     try {
-        browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-extensions",
-                "--disable-background-networking",
-                "--disable-sync",
-                "--disable-translate",
-                "--mute-audio",
-                "--no-first-run",
-                "--hide-scrollbars",
-                "--disable-background-timer-throttling",
-                "--disable-backgrounding-occluded-windows",
-                "--disable-renderer-backgrounding",
-            ],
-        });
-        await barcodeScraper.fetchBarcodes(barcodeList, browser, (result) => {
+        await barcodeScraper.fetchBarcodes(barcodeList, (result) => {
             send({ type: "result", ...result });
         });
-        await browser.close();
-        browser = null;
     } catch (err) {
         console.error("SSE hatasi:", err.message);
         send({ type: "error", message: err.message });
     } finally {
-        if (browser) await browser.close().catch(() => {});
         send({ type: "complete" });
         res.end();
     }

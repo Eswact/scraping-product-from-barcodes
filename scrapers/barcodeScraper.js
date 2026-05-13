@@ -1,6 +1,10 @@
 ﻿const cheerio = require("cheerio");
 const fs = require("fs");
+const puppeteer = require("puppeteer-extra");
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const { outputPath, ensureDirForFile } = require("../scripts/datasFs");
+
+puppeteer.use(StealthPlugin());
 
 const productListPath = outputPath("product-list.json");
 const notFoundPath = outputPath("not-found-barcodes.json");
@@ -399,7 +403,28 @@ async function fetchBarcode(barcode, pages, browser) {
     return winner.value;
 }
 
-async function fetchBarcodes(barcodes, browser, onResult = null) {
+const BROWSER_ARGS = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-sync",
+    "--disable-translate",
+    "--mute-audio",
+    "--no-first-run",
+    "--hide-scrollbars",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+];
+
+async function launchBrowser() {
+    return puppeteer.launch({ headless: true, args: BROWSER_ARGS });
+}
+
+async function fetchBarcodes(barcodes, onResult = null) {
     const productList = loadProductList();
     const existingMap = new Map(productList.map(p => [String(p.barcode), p]));
     const toFetch = barcodes.filter(b => !existingMap.has(String(b)));
@@ -412,34 +437,8 @@ async function fetchBarcodes(barcodes, browser, onResult = null) {
 
     if (toFetch.length === 0) return results;
 
-    // Create one page set per worker
-    const pageSets = await Promise.all(
-        Array.from({ length: WORKER_COUNT }, () => createPages(browser))
-    );
-    console.log(`[START] ${WORKER_COUNT} worker, ${Object.keys(pageSets[0]).length} tab/worker. ${toFetch.length} barkod islenecek.`);
-
     const queue = [...toFetch];
     let fetchCount = 0;
-
-    async function worker(pages) {
-        let localCount = 0;
-        while (queue.length > 0) {
-            const barcode = queue.shift();
-            if (!barcode) break;
-
-            fetchCount++;
-            localCount++;
-            console.log(`[${fetchCount}/${toFetch.length}] -> ${barcode}`);
-
-            if (localCount % PAGE_RESTART_INTERVAL === 0) {
-                await restartAllPages(browser, pages);
-            }
-
-            const result = await fetchBarcode(barcode, pages, browser);
-            if (onResult) onResult(result);
-            results.push(result);
-        }
-    }
 
     // Also push already-found barcodes into results
     for (const barcode of barcodes) {
@@ -450,11 +449,38 @@ async function fetchBarcodes(barcodes, browser, onResult = null) {
         }
     }
 
-    await Promise.all(pageSets.map(pages => worker(pages)));
+    async function workerRun() {
+        // Each worker gets its own isolated browser process
+        const browser = await launchBrowser();
+        const pages = await createPages(browser);
+        console.log(`[START] worker baslatildi, ${Object.keys(pages).length} tab. ${toFetch.length} barkod islenecek.`);
 
-    for (const pages of pageSets) {
-        for (const page of Object.values(pages)) await page.close().catch(() => {});
+        let localCount = 0;
+        try {
+            while (queue.length > 0) {
+                const barcode = queue.shift();
+                if (!barcode) break;
+
+                fetchCount++;
+                localCount++;
+                console.log(`[${fetchCount}/${toFetch.length}] -> ${barcode}`);
+
+                if (localCount % PAGE_RESTART_INTERVAL === 0) {
+                    await restartAllPages(browser, pages);
+                }
+
+                const result = await fetchBarcode(barcode, pages, browser);
+                if (onResult) onResult(result);
+                results.push(result);
+            }
+        } finally {
+            for (const page of Object.values(pages)) await page.close().catch(() => {});
+            await browser.close().catch(() => {});
+        }
     }
+
+    console.log(`[INIT] ${WORKER_COUNT} worker baslatiliyor...`);
+    await Promise.all(Array.from({ length: WORKER_COUNT }, () => workerRun()));
 
     return results;
 }
