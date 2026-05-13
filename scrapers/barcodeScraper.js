@@ -244,6 +244,9 @@ async function createPages(browser) {
         await page.setUserAgent(USER_AGENT);
         pages[marketName] = page;
     }
+    const breadcrumbPage = await browser.newPage();
+    await breadcrumbPage.setUserAgent(USER_AGENT);
+    pages._breadcrumb = breadcrumbPage;
     return pages;
 }
 
@@ -253,6 +256,31 @@ async function recreatePage(browser, pages, marketName) {
     await newPage.setUserAgent(USER_AGENT);
     pages[marketName] = newPage;
     return newPage;
+}
+
+async function fetchBreadcrumb(breadcrumbPage, marketName, productUrl) {
+    if (!breadcrumbPage || !breadcrumbParsers[marketName]) return [];
+    try {
+        await breadcrumbPage.goto(productUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
+        const waitSel = breadcrumbWaitSelectors[marketName];
+        if (waitSel) {
+            try { await breadcrumbPage.waitForSelector(waitSel, { timeout: 12000 }); } catch {}
+        }
+        const $detail = cheerio.load(await breadcrumbPage.content());
+        const result = breadcrumbParsers[marketName]($detail) || [];
+        await breadcrumbPage.goto("about:blank", { timeout: 3000 }).catch(() => {});
+        return result;
+    } catch {
+        return [];
+    }
+}
+
+async function releaseOtherPages(pages, winningMarket) {
+    await Promise.allSettled(
+        Object.entries(pages)
+            .filter(([name]) => name !== winningMarket && name !== "_breadcrumb")
+            .map(([, page]) => page.goto("about:blank", { timeout: 2000 }).catch(() => {}))
+    );
 }
 
 async function restartAllPages(browser, pages) {
@@ -274,35 +302,30 @@ async function doFetchForMarket(page, marketName, barcode, winner, pages, browse
     if (items && items.length && items[0].productPrice) {
         items[0].productPrice = normalizePrice(items[0].productPrice);
 
-        let categoryPath = items[0].categoryPath || [];
         const rawUrl = items[0].productUrl;
         delete items[0].productUrl;
 
-        if (rawUrl && breadcrumbParsers[marketName] && !winner.value) {
+        if (winner.value) return;
+        winner.value = { success: true, site: marketName, barcode, product: { ...items[0], categoryPath: [] } };
+
+        await releaseOtherPages(pages, marketName);
+
+        let categoryPath = items[0].categoryPath || [];
+        if (rawUrl && breadcrumbParsers[marketName]) {
             const productUrl = resolveUrl(marketName, rawUrl);
             if (productUrl) {
-                try {
-                    await page.goto(productUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
-                    const waitSel = breadcrumbWaitSelectors[marketName];
-                    if (waitSel) {
-                        try { await page.waitForSelector(waitSel, { timeout: 6000 }); } catch {}
-                    }
-                    const $detail = cheerio.load(await page.content());
-                    categoryPath = breadcrumbParsers[marketName]($detail) || [];
-                } catch {}
+                categoryPath = await fetchBreadcrumb(pages._breadcrumb, marketName, productUrl);
             }
         }
 
-        if (!winner.value) {
-            winner.value = { success: true, site: marketName, barcode, product: { ...items[0], categoryPath } };
-            addProductList(winner.value);
-            console.log(`[OK] ${marketName} -> ${barcode}`);
-        }
+        winner.value.product.categoryPath = categoryPath;
+        addProductList(winner.value);
+        console.log(`[OK] ${marketName} -> ${barcode}`);
     }
 }
 
 async function fetchBarcode(barcode, pages, browser) {
-    const marketEntries = Object.entries(pages);
+    const marketEntries = Object.entries(pages).filter(([name]) => name !== "_breadcrumb");
     const winner = { value: null };
 
     await Promise.allSettled(marketEntries.map(async ([marketName, page]) => {
