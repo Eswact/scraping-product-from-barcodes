@@ -119,6 +119,16 @@ const parsers = {
     },
 };
 
+const breadcrumbWaitSelectors = {
+    trendyol:    "#breadcrumb-context ul.breadcrumb",
+    hepsiburada: '[data-test-id="breadcrumb-last-item"]',
+    pazarama:    '[data-testid="base-breadcrumb-link"]',
+    mopas:       ".container-fluid.breadcrumb",
+    aftaMarket:  "#navigasyon ul.breadcrumb",
+    carrefour:   'script[type="application/ld+json"]',
+    sokMarket:   '[class*="Breadcrumb_breadcrumbs"]',
+};
+
 const breadcrumbParsers = {
     trendyol: ($) => {
         const items = [];
@@ -224,52 +234,101 @@ function addNotFoundBarcode(barcode) {
     }
 }
 
-async function fetchBarcode(barcode, pages) {
+const PAGE_RESTART_INTERVAL = 500;
+const DETACHED_FRAME_PATTERN = /detached frame/i;
+
+async function createPages(browser) {
+    const pages = {};
+    for (const marketName of Object.keys(webList)) {
+        const page = await browser.newPage();
+        await page.setUserAgent(USER_AGENT);
+        pages[marketName] = page;
+    }
+    return pages;
+}
+
+async function recreatePage(browser, pages, marketName) {
+    try { await pages[marketName].close(); } catch {}
+    const newPage = await browser.newPage();
+    await newPage.setUserAgent(USER_AGENT);
+    pages[marketName] = newPage;
+    return newPage;
+}
+
+async function restartAllPages(browser, pages) {
+    for (const marketName of Object.keys(pages)) {
+        try { await pages[marketName].close(); } catch {}
+    }
+    const fresh = await createPages(browser);
+    for (const marketName of Object.keys(fresh)) {
+        pages[marketName] = fresh[marketName];
+    }
+    console.log("[RESTART] Tum sayfalar yeniden olusturuldu.");
+}
+
+async function doFetchForMarket(page, marketName, barcode, winner, pages, browser) {
+    await page.goto(webList[marketName](barcode), { waitUntil: "domcontentloaded", timeout: 15000 });
+    if (winner.value) return;
+    const $ = cheerio.load(await page.content());
+    const items = parsers[marketName]($);
+    if (items && items.length && items[0].productPrice) {
+        items[0].productPrice = normalizePrice(items[0].productPrice);
+
+        let categoryPath = items[0].categoryPath || [];
+        const rawUrl = items[0].productUrl;
+        delete items[0].productUrl;
+
+        if (rawUrl && breadcrumbParsers[marketName] && !winner.value) {
+            const productUrl = resolveUrl(marketName, rawUrl);
+            if (productUrl) {
+                try {
+                    await page.goto(productUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
+                    const waitSel = breadcrumbWaitSelectors[marketName];
+                    if (waitSel) {
+                        try { await page.waitForSelector(waitSel, { timeout: 6000 }); } catch {}
+                    }
+                    const $detail = cheerio.load(await page.content());
+                    categoryPath = breadcrumbParsers[marketName]($detail) || [];
+                } catch {}
+            }
+        }
+
+        if (!winner.value) {
+            winner.value = { success: true, site: marketName, barcode, product: { ...items[0], categoryPath } };
+            addProductList(winner.value);
+            console.log(`[OK] ${marketName} -> ${barcode}`);
+        }
+    }
+}
+
+async function fetchBarcode(barcode, pages, browser) {
     const marketEntries = Object.entries(pages);
-    let winner = null;
+    const winner = { value: null };
 
     await Promise.allSettled(marketEntries.map(async ([marketName, page]) => {
         try {
-            await page.goto(webList[marketName](barcode), { waitUntil: "domcontentloaded", timeout: 15000 });
-            if (winner) return;
-            const $ = cheerio.load(await page.content());
-            const items = parsers[marketName]($);
-            if (items && items.length && items[0].productPrice) {
-                items[0].productPrice = normalizePrice(items[0].productPrice);
-
-                let categoryPath = items[0].categoryPath || [];
-                const rawUrl = items[0].productUrl;
-                delete items[0].productUrl;
-
-                if (rawUrl && breadcrumbParsers[marketName] && !winner) {
-                    const productUrl = resolveUrl(marketName, rawUrl);
-                    if (productUrl) {
-                        try {
-                            await page.goto(productUrl, { waitUntil: "networkidle2", timeout: 20000 });
-                            const $detail = cheerio.load(await page.content());
-                            categoryPath = breadcrumbParsers[marketName]($detail) || [];
-                        } catch {}
-                    }
-                }
-
-                if (!winner) {
-                    winner = { success: true, site: marketName, barcode, product: { ...items[0], categoryPath } };
-                    addProductList(winner);
-                    console.log(`[OK] ${marketName} -> ${barcode}`);
-                }
-            }
+            await doFetchForMarket(page, marketName, barcode, winner, pages, browser);
         } catch (err) {
-            if (!winner) console.warn(`[WARN] ${marketName}: ${err.message}`);
+            if (DETACHED_FRAME_PATTERN.test(err.message) && browser) {
+                try {
+                    const newPage = await recreatePage(browser, pages, marketName);
+                    await doFetchForMarket(newPage, marketName, barcode, winner, pages, browser);
+                } catch (retryErr) {
+                    if (!winner.value) console.warn(`[WARN] ${marketName}: ${retryErr.message}`);
+                }
+            } else {
+                if (!winner.value) console.warn(`[WARN] ${marketName}: ${err.message}`);
+            }
         }
     }));
 
-    if (!winner) {
-        winner = { success: false, barcode, message: "Urun bulunamadi" };
+    if (!winner.value) {
+        winner.value = { success: false, barcode, message: "Urun bulunamadi" };
         addNotFoundBarcode(barcode);
         console.log(`[NOT FOUND] ${barcode}`);
     }
 
-    return winner;
+    return winner.value;
 }
 
 async function fetchBarcodes(barcodes, browser, onResult = null) {
@@ -283,12 +342,7 @@ async function fetchBarcodes(barcodes, browser, onResult = null) {
 
     let pages = null;
     if (toFetch.length > 0) {
-        pages = {};
-        for (const marketName of Object.keys(webList)) {
-            const page = await browser.newPage();
-            await page.setUserAgent(USER_AGENT);
-            pages[marketName] = page;
-        }
+        pages = await createPages(browser);
         console.log(`[START] ${Object.keys(pages).length} tab acildi. ${toFetch.length} barkod islenecek.`);
     }
 
@@ -302,7 +356,12 @@ async function fetchBarcodes(barcodes, browser, onResult = null) {
         } else {
             fetchCount++;
             console.log(`[${fetchCount}/${toFetch.length}] -> ${barcode}`);
-            result = await fetchBarcode(barcode, pages);
+
+            if (fetchCount % PAGE_RESTART_INTERVAL === 0) {
+                await restartAllPages(browser, pages);
+            }
+
+            result = await fetchBarcode(barcode, pages, browser);
         }
         if (onResult) onResult(result);
         results.push(result);
