@@ -251,15 +251,18 @@ function addNotFoundBarcode(barcode) {
     }
 }
 
-const PAGE_RESTART_INTERVAL = 500;
+const PAGE_RESTART_INTERVAL = 300;
 const DETACHED_FRAME_PATTERN = /detached frame/i;
 const WORKER_COUNT = Math.max(1, parseInt(process.env.SCRAPER_WORKERS || "1", 10));
 
-const BLOCKED_RESOURCE_TYPES = new Set(["image", "media", "font", "stylesheet"]);
-const BLOCKED_URL_PATTERNS = ["google-analytics", "googletagmanager", "hotjar", "facebook", "doubleclick", "adservice", "analytics"];
+const BLOCKED_RESOURCE_TYPES = new Set(["image", "media", "font"]);
+const BLOCKED_URL_PATTERNS = ["google-analytics.com", "googletagmanager.com", "hotjar.com", "connect.facebook.net", "doubleclick.net", "adservice.google.com"];
+// Trendyol detects request interception changes and may serve a different page
+const NO_INTERCEPTION_MARKETS = new Set(["trendyol"]);
 
-async function setupPage(page) {
+async function setupPage(page, marketName = null) {
     await page.setUserAgent(USER_AGENT);
+    if (marketName && NO_INTERCEPTION_MARKETS.has(marketName)) return;
     await page.setRequestInterception(true);
     page.on("request", (req) => {
         if (BLOCKED_RESOURCE_TYPES.has(req.resourceType())) return req.abort();
@@ -272,11 +275,11 @@ async function createPages(browser) {
     const pages = {};
     for (const marketName of Object.keys(webList)) {
         const page = await browser.newPage();
-        await setupPage(page);
+        await setupPage(page, marketName);
         pages[marketName] = page;
     }
     const breadcrumbPage = await browser.newPage();
-    await setupPage(breadcrumbPage);
+    await setupPage(breadcrumbPage, "trendyol");
     pages._breadcrumb = breadcrumbPage;
     return pages;
 }
@@ -284,7 +287,7 @@ async function createPages(browser) {
 async function recreatePage(browser, pages, marketName) {
     try { await pages[marketName].close(); } catch {}
     const newPage = await browser.newPage();
-    await setupPage(newPage);
+    await setupPage(newPage, marketName);
     pages[marketName] = newPage;
     return newPage;
 }
@@ -328,7 +331,7 @@ async function restartAllPages(browser, pages) {
 const slowMarkets = new Set(["carrefour", "sokMarket"]);
 
 async function doFetchForMarket(page, marketName, barcode, winner, pages, browser) {
-    const searchTimeout = slowMarkets.has(marketName) ? 20000 : 15000;
+    const searchTimeout = slowMarkets.has(marketName) ? 18000 : 12000;
     await page.goto(webList[marketName](barcode), { waitUntil: "domcontentloaded", timeout: searchTimeout });
     if (winner.value) return;
     const $ = cheerio.load(await page.content());

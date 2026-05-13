@@ -24,7 +24,22 @@ app.post("/api/get-products", async (req, res) => {
     try {
         const browser = await puppeteer.launch({
             headless: true,
-            args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            args: [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-extensions",
+                "--disable-background-networking",
+                "--disable-sync",
+                "--disable-translate",
+                "--mute-audio",
+                "--no-first-run",
+                "--hide-scrollbars",
+                "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+            ],
         });
         const results = await barcodeScraper.fetchBarcodes(barcodeList, browser);
         await browser.close();
@@ -52,7 +67,22 @@ app.post("/api/search", async (req, res) => {
     try {
         browser = await puppeteer.launch({
             headless: true,
-            args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            args: [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-extensions",
+                "--disable-background-networking",
+                "--disable-sync",
+                "--disable-translate",
+                "--mute-audio",
+                "--no-first-run",
+                "--hide-scrollbars",
+                "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+            ],
         });
         await barcodeScraper.fetchBarcodes(barcodeList, browser, (result) => {
             send({ type: "result", ...result });
