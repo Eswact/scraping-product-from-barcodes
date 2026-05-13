@@ -131,8 +131,25 @@ const breadcrumbWaitSelectors = {
 
 const breadcrumbParsers = {
     trendyol: ($) => {
+        let jsonItems = null;
+        $('script').each((_, el) => {
+            if (jsonItems) return;
+            const html = $(el).html() || '';
+            if (!html.includes('__product-detail-seo__PROPS')) return;
+            try {
+                const jsonStr = html.replace(/^window\[["']__product-detail-seo__PROPS["']\]=/, '');
+                const data = JSON.parse(jsonStr);
+                if (Array.isArray(data.breadcrumbs) && data.breadcrumbs.length) {
+                    jsonItems = data.breadcrumbs
+                        .filter(b => b.name && b.name.trim() !== 'Trendyol')
+                        .map(b => b.name.trim());
+                }
+            } catch {}
+        });
+        if (jsonItems && jsonItems.length) return jsonItems;
+
         const items = [];
-        $("#breadcrumb-context ul.breadcrumb li a").each((_, el) => {
+        $("#breadcrumb-context ul.breadcrumb li a, #product-detail-breadcrumbs ul.breadcrumb-list li a").each((_, el) => {
             const text = $(el).text().trim();
             if (text && text !== "Trendyol") items.push(text);
         });
