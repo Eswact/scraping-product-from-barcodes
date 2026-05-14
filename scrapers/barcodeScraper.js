@@ -231,6 +231,11 @@ function loadProductList() {
     try { return JSON.parse(fs.readFileSync(productListPath)); } catch { return []; }
 }
 
+function loadNotFoundBarcodes() {
+    if (!fs.existsSync(notFoundPath)) return [];
+    try { return JSON.parse(fs.readFileSync(notFoundPath, "utf-8")); } catch { return []; }
+}
+
 function addProductList(product) {
     const existingList = loadProductList();
     if (existingList.find(item => item.barcode === product.barcode)) return;
@@ -256,6 +261,7 @@ function addNotFoundBarcode(barcode) {
 }
 
 const PAGE_RESTART_INTERVAL = 300;
+const BROWSER_RESTART_INTERVAL = parseInt(process.env.BROWSER_RESTART_INTERVAL || "1000", 10);
 const DETACHED_FRAME_PATTERN = /detached frame/i;
 const WORKER_COUNT = Math.max(1, parseInt(process.env.SCRAPER_WORKERS || "1", 10));
 
@@ -427,11 +433,14 @@ async function launchBrowser() {
 async function fetchBarcodes(barcodes, onResult = null) {
     const productList = loadProductList();
     const existingMap = new Map(productList.map(p => [String(p.barcode), p]));
-    const toFetch = barcodes.filter(b => !existingMap.has(String(b)));
+    const notFoundSet = new Set(loadNotFoundBarcodes().map(b => String(b)));
 
-    if (toFetch.length < barcodes.length) {
-        console.log(`[SKIP] ${barcodes.length - toFetch.length} barkod zaten mevcut.`);
-    }
+    const toFetch = barcodes.filter(b => !existingMap.has(String(b)) && !notFoundSet.has(String(b)));
+    const skippedFound = barcodes.filter(b => existingMap.has(String(b))).length;
+    const skippedNotFound = barcodes.filter(b => notFoundSet.has(String(b))).length;
+
+    if (skippedFound > 0) console.log(`[SKIP] ${skippedFound} barkod zaten bulunmus.`);
+    if (skippedNotFound > 0) console.log(`[SKIP] ${skippedNotFound} barkod daha once bulunamadi olarak isaretli, atlaniyor.`);
 
     const results = [];
 
@@ -440,7 +449,6 @@ async function fetchBarcodes(barcodes, onResult = null) {
     const queue = [...toFetch];
     let fetchCount = 0;
 
-    // Also push already-found barcodes into results
     for (const barcode of barcodes) {
         if (existingMap.has(String(barcode))) {
             const result = { ...existingMap.get(String(barcode)), success: true };
@@ -450,9 +458,8 @@ async function fetchBarcodes(barcodes, onResult = null) {
     }
 
     async function workerRun() {
-        // Each worker gets its own isolated browser process
-        const browser = await launchBrowser();
-        const pages = await createPages(browser);
+        let browser = await launchBrowser();
+        let pages = await createPages(browser);
         console.log(`[START] worker baslatildi, ${Object.keys(pages).length} tab. ${toFetch.length} barkod islenecek.`);
 
         let localCount = 0;
@@ -465,7 +472,14 @@ async function fetchBarcodes(barcodes, onResult = null) {
                 localCount++;
                 console.log(`[${fetchCount}/${toFetch.length}] -> ${barcode}`);
 
-                if (localCount % PAGE_RESTART_INTERVAL === 0) {
+                if (localCount % BROWSER_RESTART_INTERVAL === 0) {
+                    console.log(`[BROWSER RESTART] ${localCount}. barkodda tarayici yeniden baslatiliyor...`);
+                    for (const page of Object.values(pages)) await page.close().catch(() => {});
+                    await browser.close().catch(() => {});
+                    browser = await launchBrowser();
+                    pages = await createPages(browser);
+                    console.log(`[BROWSER RESTART] Tarayici yeniden baslatildi.`);
+                } else if (localCount % PAGE_RESTART_INTERVAL === 0) {
                     await restartAllPages(browser, pages);
                 }
 
