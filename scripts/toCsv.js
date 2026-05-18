@@ -19,21 +19,22 @@ function escapeCsv(value) {
     return str;
 }
 
-const header = ["barcode", "site", "productTitle", "productPrice", "productImgSrc"];
+const header = ["barcode", "site", "productTitle", "productPrice", "productImgSrc", "categoryPath"];
 const rows = [header.join(",")];
 
 for (const product of productList) {
     const barcode = product.barcode;
     const site = product.site || "";
     const item = product.product || {};
+    const categoryPath = Array.isArray(item.categoryPath) ? item.categoryPath.join(" > ") : (item.categoryPath || "");
 
     if (Array.isArray(barcode)) {
         for (const b of barcode) {
             const imgSrc = `images/${b}.jpg`;
-            rows.push([b, site, item.productTitle || "", item.productPrice || "", imgSrc].map(escapeCsv).join(","));
+            rows.push([b, site, item.productTitle || "", item.productPrice || "", imgSrc, categoryPath].map(escapeCsv).join(","));
         }
     } else {
-        rows.push([barcode, site, item.productTitle || "", item.productPrice || "", item.productImgSrc || ""].map(escapeCsv).join(","));
+        rows.push([barcode, site, item.productTitle || "", item.productPrice || "", item.productImgSrc || "", categoryPath].map(escapeCsv).join(","));
     }
 }
 

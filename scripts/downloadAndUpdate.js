@@ -31,25 +31,34 @@ async function downloadImage(url, filePath) {
     }
 }
 
+const CONCURRENCY = parseInt(process.env.DOWNLOAD_CONCURRENCY || "10", 10);
+
 async function run() {
     const cannotDownload = [];
     let downloaded = 0;
     let skipped = 0;
     let failed = 0;
+    let processed = 0;
 
-    for (let i = 0; i < productList.length; i++) {
-        const product = productList[i];
+    const tasks = [];
+    for (const product of productList) {
         const imgUrl = product.product?.productImgSrc;
         if (!imgUrl) continue;
-
         const barcodes = Array.isArray(product.barcode) ? product.barcode : [product.barcode];
-
         for (const barcode of barcodes) {
-            const filePath = path.join(imagesDir, `${barcode}.jpg`);
-            if (fs.existsSync(filePath)) {
-                skipped++;
-                continue;
-            }
+            tasks.push({ imgUrl, barcode });
+        }
+    }
+
+    const total = tasks.length;
+    console.log(`[START] ${total} resim indirilecek, ${CONCURRENCY} paralel.`);
+
+    async function worker(task) {
+        const { imgUrl, barcode } = task;
+        const filePath = path.join(imagesDir, `${barcode}.jpg`);
+        if (fs.existsSync(filePath)) {
+            skipped++;
+        } else {
             const ok = await downloadImage(imgUrl, filePath);
             if (ok) {
                 downloaded++;
@@ -58,13 +67,21 @@ async function run() {
                 if (!cannotDownload.includes(barcode)) cannotDownload.push(barcode);
             }
         }
-
-        if ((i + 1) % 500 === 0) {
-            console.log(`[${i + 1}/${productList.length}] indiriliyor...`);
+        processed++;
+        if (processed % 500 === 0) {
+            console.log(`[${processed}/${total}] indirildi: ${downloaded} basarili, ${skipped} atlandi, ${failed} basarisiz.`);
         }
-
-        await new Promise(r => setTimeout(r, 80));
     }
+
+    // Run with limited concurrency
+    let index = 0;
+    async function runWorker() {
+        while (index < tasks.length) {
+            const task = tasks[index++];
+            await worker(task);
+        }
+    }
+    await Promise.all(Array.from({ length: CONCURRENCY }, runWorker));
 
     console.log(`Tamamlandi: ${downloaded} indirildi, ${skipped} zaten vardi, ${failed} basarisiz.`);
 
